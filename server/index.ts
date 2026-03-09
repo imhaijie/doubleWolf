@@ -380,8 +380,20 @@ app.prepare().then(() => {
     return handle(req, res);
   });
 
+  httpServer.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EADDRINUSE') {
+      console.log(`> Port ${port} is in use, trying port ${port + 1}...`);
+      httpServer.listen(port + 1, hostname);
+    } else {
+      console.error('Server error:', err);
+      process.exit(1);
+    }
+  });
+
   httpServer.listen(port, hostname, () => {
-    console.log(`> Ready on http://${hostname}:${port}`);
+    const address = httpServer.address();
+    const actualPort = typeof address === 'object' && address ? address.port : port;
+    console.log(`> Ready on http://${hostname}:${actualPort}`);
     console.log(`> Socket.IO server running`);
   });
 });
