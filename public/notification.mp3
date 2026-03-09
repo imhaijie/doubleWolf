@@ -1,0 +1,4 @@
+// 这是一个简单的提示音占位文件
+// 实际使用时，请替换为真实的音频文件
+// 可以使用以下命令生成简单的提示音：
+// ffmpeg -f lavfi -i "sine=frequency=800:duration=0.1" -ar 44100 notification.mp3

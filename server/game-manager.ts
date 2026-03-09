@@ -15,6 +15,7 @@ const NIGHT_PHASES: NightSubPhase[] = ['werewolf', 'seer', 'witch', 'guard', 'se
 
 export class GameManager {
   private io: Server;
+  // 通用计时器，包括白天发言/投票和夜晚子阶段超时
   private timers: Map<string, NodeJS.Timeout> = new Map();
 
   constructor(io: Server) {
@@ -137,53 +138,61 @@ export class GameManager {
     this.promptNightActions(room, 'werewolf');
   }
 
-  // 提示夜晚行动
+  // 获取子阶段显示名称
+  private getSubPhaseGroupName(subPhase: NightSubPhase): string {
+    switch (subPhase) {
+      case 'werewolf': return '狼人组';
+      case 'seer': return '预言家组';
+      case 'witch': return '女巫组';
+      case 'guard': return '守卫组';
+      case 'settle': return '结算';
+      default: return '';
+    }
+  }
+
+  // 提示夜晚行动（每个阶段都会执行，即使没有人需要行动）
   private promptNightActions(room: Room, subPhase: NightSubPhase): void {
+    // 清除之前的阶段超时
+    this.clearTimer(`night-${room.id}`);
+
     room.nightState.currentSubPhase = subPhase;
     const alivePlayers = getAlivePlayers(room);
     const alivePlayerData = alivePlayers.map(p => store.serializePlayer(p, room.hostId));
 
+
     switch (subPhase) {
       case 'werewolf': {
         const wolves = getAliveWolves(room);
-        if (wolves.length === 0) {
-          this.advanceNightPhase(room);
-          return;
-        }
-        for (const wolf of wolves) {
-          // 狼人只能刀非狼人阵营玩家
-          const targets = alivePlayers.filter(p => !p.isWolfFaction);
-          this.sendToPlayer(room, wolf.id, 'action-prompt', {
-            actionType: 'wolf-kill',
-            options: targets.map(p => store.serializePlayer(p, room.hostId)),
-          });
+        if (wolves.length > 0) {
+          for (const wolf of wolves) {
+            // 狼人只能刀非狼人阵营玩家
+            const targets = alivePlayers.filter(p => !p.isWolfFaction);
+            this.sendToPlayer(room, wolf.id, 'action-prompt', {
+              actionType: 'wolf-kill',
+              options: targets.map(p => store.serializePlayer(p, room.hostId)),
+            });
+          }
         }
         break;
       }
 
       case 'seer': {
         const seers = getAlivePlayersByRole(room, 'seer');
-        if (seers.length === 0) {
-          this.advanceNightPhase(room);
-          return;
-        }
-        for (const seer of seers) {
-          // 预言家可以查验任何其他存活玩家
-          const targets = alivePlayers.filter(p => p.id !== seer.id);
-          this.sendToPlayer(room, seer.id, 'action-prompt', {
-            actionType: 'seer-check',
-            options: targets.map(p => store.serializePlayer(p, room.hostId)),
-          });
+        if (seers.length > 0) {
+          for (const seer of seers) {
+            const targets = alivePlayers.filter(p => p.id !== seer.id);
+            this.sendToPlayer(room, seer.id, 'action-prompt', {
+              actionType: 'seer-check',
+              options: targets.map(p => store.serializePlayer(p, room.hostId)),
+            });
+          }
         }
         break;
       }
 
+
       case 'witch': {
         const witches = getAlivePlayersByRole(room, 'witch');
-        if (witches.length === 0) {
-          this.advanceNightPhase(room);
-          return;
-        }
         for (const witch of witches) {
           const witchState = store.getWitchState(room, witch.id);
           const wolfTarget = room.nightState.wolfTarget;
@@ -209,10 +218,6 @@ export class GameManager {
 
       case 'guard': {
         const guards = getAlivePlayersByRole(room, 'guard');
-        if (guards.length === 0) {
-          this.advanceNightPhase(room);
-          return;
-        }
         for (const guard of guards) {
           // 守卫不能连续守同一人
           const targets = alivePlayers.filter(p => 
@@ -240,12 +245,37 @@ export class GameManager {
       subPhase,
       data: { nightNumber: room.nightState.nightNumber },
     });
+
+    // 自动超时：20 秒后若未全部完成则自动推进并通知房主
+    const timer = setTimeout(() => {
+      this.sendToHost(room, 'phase-complete', `${this.getSubPhaseGroupName(subPhase)} 超时`);
+      this.advanceNightPhase(room);
+    }, 20_000);
+    this.timers.set(`night-${room.id}`, timer);
   }
 
   // 提交夜晚行动
   submitNightAction(room: Room, playerId: string, actionType: string, targetId?: string, extraData?: unknown): void {
+    // 每次有人提交动作，都清除当期超时计时器以避免重复执行
+    this.clearTimer(`night-${room.id}`);
     const player = room.players.get(playerId);
     if (!player) return;
+
+    // 如果动作与当前子阶段不匹配，忽略（例如超时后晚提交）
+    const phaseMap: Record<string, NightSubPhase> = {
+      'wolf-kill': 'werewolf',
+      'seer-check': 'seer',
+      'witch-save': 'witch',
+      'witch-skip-save': 'witch',
+      'witch-poison': 'witch',
+      'witch-skip-poison': 'witch',
+      'witch-done': 'witch',
+      'guard-protect': 'guard',
+      'skip': room.nightState.currentSubPhase as NightSubPhase, // skip allowed anytime
+    };
+    if (phaseMap[actionType] && phaseMap[actionType] !== room.nightState.currentSubPhase) {
+      return;
+    }
 
     switch (actionType) {
       case 'wolf-kill': {
@@ -309,9 +339,14 @@ export class GameManager {
             });
           }
         }
-        
-        this.sendToHost(room, 'phase-complete', '预言家组');
-        this.advanceNightPhase(room);
+
+        // seer 完成后不要立刻推进，让界面有时间显示结果
+        setTimeout(() => {
+          // 清除可能的夜晚超时计时器
+          this.clearTimer(`night-${room.id}`);
+          this.sendToHost(room, 'phase-complete', '预言家组');
+          this.advanceNightPhase(room);
+        }, 2000);
         break;
       }
 
@@ -447,6 +482,12 @@ export class GameManager {
     }
 
     if (allComplete) {
+      // 完成时清除超时计时器
+      this.clearTimer(`night-${room.id}`);
+      this.advanceNightPhase(room);
+    }
+
+    if (allComplete) {
       this.advanceNightPhase(room);
     }
   }
@@ -463,6 +504,8 @@ export class GameManager {
 
   // 结算夜晚
   private settleNight(room: Room): void {
+    // 夜晚结算前也要清除超时计时器防止残留
+    this.clearTimer(`night-${room.id}`);
     const deaths: DeathRecord[] = [];
     const { wolfTarget, witchSave, witchPoison, guardTarget } = room.nightState;
 
@@ -890,6 +933,7 @@ export class GameManager {
     const timer = this.timers.get(timerId);
     if (timer) {
       clearInterval(timer);
+      clearTimeout(timer);
       this.timers.delete(timerId);
     }
   }
@@ -898,5 +942,6 @@ export class GameManager {
   clearRoomTimers(roomId: string): void {
     this.clearTimer(`speech-${roomId}`);
     this.clearTimer(`vote-${roomId}`);
+    this.clearTimer(`night-${roomId}`);
   }
 }

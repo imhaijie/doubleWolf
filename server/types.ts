@@ -166,7 +166,7 @@ export interface ServerToClientEvents {
 }
 
 export interface ClientToServerEvents {
-  'create-room': (data: { hostName: string; settings?: Partial<GameSettings> }, callback: (response: { success: boolean; roomId?: string; playerId?: string; error?: string }) => void) => void;
+  'create-room': (data: { hostName: string; settings?: Partial<GameSettings>; customRoomId?: string; rolePool?: RolePool }, callback: (response: { success: boolean; roomId?: string; playerId?: string; error?: string }) => void) => void;
   'join-room': (data: { roomId: string; playerName: string; playerId?: string }, callback: (response: { success: boolean; playerId?: string; error?: string }) => void) => void;
   'reconnect-room': (data: { roomId: string; playerId: string }, callback: (response: { success: boolean; error?: string }) => void) => void;
   'update-settings': (settings: Partial<GameSettings>) => void;

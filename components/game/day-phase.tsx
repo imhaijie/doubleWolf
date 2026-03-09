@@ -17,7 +17,7 @@ import {
 import { PlayerSeats } from './player-seats';
 import type { GameState } from '@/hooks/use-game-state';
 import { ROLE_DISPLAY, getCurrentIdentity, isPlayerOut } from '@/lib/types';
-import { submitVote, explode } from '@/lib/socket';
+import { submitVote, explode, endSpeech } from '@/lib/socket';
 
 interface DayPhaseProps {
   gameState: GameState;
@@ -73,7 +73,7 @@ export function DayPhase({ gameState }: DayPhaseProps) {
   const handleVote = () => {
     if (selectedTarget && !hasVoted && !isOut) {
       submitVote(selectedTarget);
-      markVoted();
+      markVoted?.();
     }
   };
 
@@ -203,23 +203,23 @@ export function DayPhase({ gameState }: DayPhaseProps) {
             ) : (
               <>
                 <div className="flex gap-2">
-                  <Button 
-                    variant="outline" 
+                  <Button
+                    variant="outline"
                     className="flex-1"
                     onClick={() => {
                       submitVote('');
-                      markVoted();
+                      markVoted?.();
                     }}
                   >
                     弃票
                   </Button>
-                  <Button 
+                  <Button
                     className="flex-1"
                     onClick={handleVote}
                     disabled={!selectedTarget}
                   >
-                    投票给 {selectedTarget 
-                      ? `${room.players.find(p => p.id === selectedTarget)?.seatNumber}号` 
+                    投票给 {selectedTarget
+                      ? `${room.players.find(p => p.id === selectedTarget)?.seatNumber}号`
                       : '...'}
                   </Button>
                 </div>
@@ -241,6 +241,17 @@ export function DayPhase({ gameState }: DayPhaseProps) {
               </div>
             )}
             
+            {/* 房主可提前结束发言 */}
+            {room.hostId === currentPlayer.id && isSpeechPhase && !isOut && (
+              <Button
+                variant="secondary"
+                className="w-full mb-2"
+                onClick={() => endSpeech()}
+              >
+                提前结束发言
+              </Button>
+            )}
+
             {/* 白狼王自爆按钮 */}
             {isWhiteWolfKing && !isOut && (
               <Button

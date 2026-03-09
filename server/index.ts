@@ -292,6 +292,15 @@ app.prepare().then(() => {
       }
     });
 
+    // 房主结束发言计时
+    socket.on('end-speech', () => {
+      const mapping = socketToPlayer.get(socket.id);
+      if (!mapping) return;
+      const room = store.getRoom(mapping.roomId);
+      if (!room) return;
+      gameManager.endSpeech(room, mapping.playerId);
+    });
+
     // 踢人（仅房主）
     socket.on('kick-player', (targetPlayerId: string) => {
       const mapping = socketToPlayer.get(socket.id);

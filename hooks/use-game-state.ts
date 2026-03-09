@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { 
   getSocket, onSocketEvent, getSession, reconnectRoom, saveSession 
 } from '@/lib/socket';
+import { useToast } from '@/hooks/use-toast';
 import type { 
   SerializedRoom, SerializedPlayer, GamePhase, NightSubPhase,
   GameRecap, Role, RolePool, GameSettings
@@ -29,41 +30,45 @@ export interface GameState {
   // 连接状态
   isConnected: boolean;
   isReconnecting: boolean;
-  
+
   // 房间状态
   room: SerializedRoom | null;
   currentPlayer: SerializedPlayer | null;
-  
+
   // 游戏进行状态
   currentPhase: GamePhase;
   nightSubPhase: NightSubPhase | null;
   nightNumber: number;
-  
+
   // 操作状态
   actionPrompt: ActionPrompt | null;
   actionResult: { result: string; extraData?: unknown } | null;
   hasSubmittedAction: boolean;
-  
+
   // 白天状态
   speechTimeLeft: number;
   voteTimeLeft: number;
   votedCount: number;
   totalVoters: number;
   hasVoted: boolean;
-  
+
   // 死亡公告
   deathEvents: DeathEvent[];
-  
+
   // 游戏结束
   gameOver: boolean;
   winner: 'wolf' | 'good' | null;
   recap: GameRecap | null;
-  
+
   // 错误
   error: string | null;
-  
+
   // 被踢出
   kicked: boolean;
+
+  // 操作方法（由 hook 添加）
+  setPlayerId?: (playerId: string) => void;
+  markVoted?: () => void;
 }
 
 const initialState: GameState = {
@@ -126,6 +131,8 @@ export function useGameState(roomId?: string) {
   }, [updateState]);
 
   // 初始化 Socket 监听
+  const { toast } = useToast();
+
   useEffect(() => {
     const socket = getSocket();
     const cleanups: (() => void)[] = [];
@@ -247,11 +254,13 @@ export function useGameState(roomId?: string) {
 
     // 房主通知（仅房主）
     cleanups.push(onSocketEvent('phase-complete', (group) => {
-      // 播放提示音
       if (typeof window !== 'undefined' && state.currentPlayer?.isHost) {
+        // 播放提示音
         const audio = new Audio('/notification.mp3');
         audio.volume = 0.5;
         audio.play().catch(() => {});
+        // 显示文字提示
+        toast({ title: group });
       }
     }));
 
