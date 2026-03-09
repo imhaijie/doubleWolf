@@ -11,7 +11,7 @@ import {
 } from './victory-check';
 
 // 夜晚阶段顺序
-const NIGHT_PHASES: NightSubPhase[] = ['werewolf', 'seer', 'witch', 'guard', 'settle'];
+const NIGHT_PHASES: NightSubPhase[] = ['werewolf', 'seer', 'witch', 'guard', 'hunter', 'settle'];
 
 export class GameManager {
   private io: Server;
@@ -160,13 +160,15 @@ export class GameManager {
     const alivePlayerData = alivePlayers.map(p => store.serializePlayer(p, room.hostId));
 
 
+    let hasActors = false;
     switch (subPhase) {
       case 'werewolf': {
         const wolves = getAliveWolves(room);
         if (wolves.length > 0) {
+          hasActors = true;
           for (const wolf of wolves) {
-            // 狼人只能刀非狼人阵营玩家
-            const targets = alivePlayers.filter(p => !p.isWolfFaction);
+            // 狼人可以刀任何非狼人阵营玩家，也可以自刀
+            const targets = alivePlayers.filter(p => !p.isWolfFaction || p.id === wolf.id);
             this.sendToPlayer(room, wolf.id, 'action-prompt', {
               actionType: 'wolf-kill',
               options: targets.map(p => store.serializePlayer(p, room.hostId)),
@@ -179,6 +181,7 @@ export class GameManager {
       case 'seer': {
         const seers = getAlivePlayersByRole(room, 'seer');
         if (seers.length > 0) {
+          hasActors = true;
           for (const seer of seers) {
             const targets = alivePlayers.filter(p => p.id !== seer.id);
             this.sendToPlayer(room, seer.id, 'action-prompt', {
@@ -193,6 +196,9 @@ export class GameManager {
 
       case 'witch': {
         const witches = getAlivePlayersByRole(room, 'witch');
+        if (witches.length > 0) {
+          hasActors = true;
+        }
         for (const witch of witches) {
           const witchState = store.getWitchState(room, witch.id);
           const wolfTarget = room.nightState.wolfTarget;
@@ -218,10 +224,13 @@ export class GameManager {
 
       case 'guard': {
         const guards = getAlivePlayersByRole(room, 'guard');
+        if (guards.length > 0) {
+          hasActors = true;
+        }
         for (const guard of guards) {
-          // 守卫不能连续守同一人
+          // 守卫不能连续守同一人，但允许守护自己
           const targets = alivePlayers.filter(p => 
-            p.id !== room.nightState.lastGuardTarget
+            p.id !== room.nightState.lastGuardTarget || p.id === guard.id
           );
           this.sendToPlayer(room, guard.id, 'action-prompt', {
             actionType: 'guard-protect',
@@ -230,6 +239,24 @@ export class GameManager {
               lastTarget: room.nightState.lastGuardTarget,
             },
           });
+        }
+        break;
+      }
+
+      case 'hunter': {
+        const hunters = getAlivePlayersByRole(room, 'hunter');
+        if (hunters.length > 0 && !room.nightState.hunterTriggered) {
+          hasActors = true;
+        }
+        // 弹性猎人环节：所有未触发的猎人可选择夜间开枪
+        for (const hunter of hunters) {
+          if (!room.nightState.hunterTriggered) {
+            const targets = alivePlayers.filter(p => p.id !== hunter.id);
+            this.sendToPlayer(room, hunter.id, 'action-prompt', {
+              actionType: 'hunter-shot',
+              options: targets.map(p => store.serializePlayer(p, room.hostId)),
+            });
+          }
         }
         break;
       }
@@ -246,12 +273,14 @@ export class GameManager {
       data: { nightNumber: room.nightState.nightNumber },
     });
 
-    // 自动超时：20 秒后若未全部完成则自动推进并通知房主
-    const timer = setTimeout(() => {
-      this.sendToHost(room, 'phase-complete', `${this.getSubPhaseGroupName(subPhase)} 超时`);
-      this.advanceNightPhase(room);
-    }, 20_000);
-    this.timers.set(`night-${room.id}`, timer);
+    // 只有在没有任何需要行动的玩家时才设置自动超时
+    if (!hasActors) {
+      const timer = setTimeout(() => {
+        this.sendToHost(room, 'phase-complete', `${this.getSubPhaseGroupName(subPhase)} 超时`);
+        this.advanceNightPhase(room);
+      }, 20_000);
+      this.timers.set(`night-${room.id}`, timer);
+    }
   }
 
   // 提交夜晚行动
@@ -271,6 +300,7 @@ export class GameManager {
       'witch-skip-poison': 'witch',
       'witch-done': 'witch',
       'guard-protect': 'guard',
+      'hunter-shot': 'hunter',
       'skip': room.nightState.currentSubPhase as NightSubPhase, // skip allowed anytime
     };
     if (phaseMap[actionType] && phaseMap[actionType] !== room.nightState.currentSubPhase) {
@@ -280,10 +310,36 @@ export class GameManager {
     switch (actionType) {
       case 'wolf-kill': {
         if (!isCurrentIdentityWolf(player)) return;
+        room.nightState.completedActions.add(playerId);
+        
+        // 支持双狼人传入多个目标
+        const targetsArray: string[] = extraData && Array.isArray((extraData as any).targets)
+          ? (extraData as any).targets
+          : targetId ? [targetId] : [];
+        // 如果提供了目标列表，则立即执行杀戮而不等待投票
+        if (targetsArray.length > 0 && targetsArray.length > 1) {
+          const deaths: DeathRecord[] = [];
+          for (const t of targetsArray) {
+            this.killPlayerIdentity(room, t, 'wolf-kill', deaths);
+          }
+          room.nightState.wolfTarget = targetsArray[0] || null;
+          room.nightState.pendingDeaths.push(...deaths.map(d => d.playerId));
+          this.addGameEvent(room, {
+            type: 'action',
+            playerId,
+            actionType: 'wolf-kill',
+            message: `双狼人${player.name}对 ${targetsArray.join(', ')} 发动攻击`,
+          });
+          // 结束阶段直接结算
+          this.clearTimer(`night-${room.id}`);
+          setTimeout(() => this.advanceNightPhase(room), 2000);
+          break;
+        }
+
+        // 下面仍旧使用投票逻辑
         if (targetId) {
           room.nightState.wolfVotes.set(playerId, targetId);
         }
-        room.nightState.completedActions.add(playerId);
         
         // 检查是否所有狼人都投票了
         const wolves = getAliveWolves(room);
@@ -323,7 +379,9 @@ export class GameManager {
         if (targetId) {
           const target = room.players.get(targetId);
           if (target) {
-            const result = target.isWolfFaction ? '查杀' : '金水';
+            // 查验目标当前活着的身份
+            const targetCurrentIdentity = getCurrentIdentity(target);
+            const result = targetCurrentIdentity && (targetCurrentIdentity.type === 'werewolf' || targetCurrentIdentity.type === 'white-wolf-king') ? '查杀' : '金水';
             this.sendToPlayer(room, playerId, 'action-result', {
               result,
               extraData: { targetId, targetName: target.name },
@@ -532,6 +590,21 @@ export class GameManager {
     room.deaths.push(...deaths);
     room.nightState.pendingDeaths = deaths.map(d => d.playerId);
 
+    // 添加事件日志，方便回放查看每夜结算结果
+    for (const d of deaths) {
+      const player = room.players.get(d.playerId);
+      if (!player) continue;
+      const identityName = d.identity === 1 ? player.identity1?.type : player.identity2?.type;
+      const msg = identityName
+        ? `夜间${identityName}身份的【${player.seatNumber}号】阵亡 (原因：${d.cause})`
+        : `夜间【${player.seatNumber}号】阵亡 (原因：${d.cause})`;
+      this.addGameEvent(room, {
+        type: 'death',
+        playerId: d.playerId,
+        message: msg,
+      });
+    }
+
     // 检查猎人触发
     const hunterDeath = deaths.find(d => {
       const player = room.players.get(d.playerId);
@@ -694,6 +767,19 @@ export class GameManager {
     }, 1000);
 
     this.timers.set(timerId, timer);
+  }
+
+  // 房主结束发言
+  endSpeech(room: Room, playerId: string): void {
+    // 只有房主可以结束发言
+    if (room.hostId !== playerId) return;
+    if (room.phase !== 'day-speech') return;
+
+    // 停止发言计时
+    this.clearTimer(`speech-${room.id}`);
+
+    // 直接进入投票阶段
+    this.startVoting(room);
   }
 
   // 白狼王自爆

@@ -319,6 +319,14 @@ export function serializeRoom(room: Room, forPlayerId?: string): SerializedRoom 
       votingPhase: room.dayState.votingPhase,
     } : undefined,
     winner: room.winner,
+    // 将事件历史传给客户端，去掉敏感的 playerId/targetId 以避免泄露身份信息
+    gameHistory: room.gameHistory.map(e => ({
+      timestamp: e.timestamp,
+      phase: e.phase,
+      nightNumber: e.nightNumber,
+      type: e.type,
+      message: e.message,
+    })),
   };
 }
 

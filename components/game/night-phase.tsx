@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PlayerSeats } from './player-seats';
+import { TimelineDialog } from './timeline';
 import type { GameState } from '@/hooks/use-game-state';
 import type { SerializedPlayer } from '@/lib/types';
 import { ROLE_DISPLAY, getCurrentIdentity, isPlayerOut } from '@/lib/types';
@@ -61,19 +62,23 @@ export function NightPhase({ gameState }: NightPhaseProps) {
         </div>
 
         {/* 当前身份 */}
-        {currentRole && !isOut && (
-          <Badge 
-            className="gap-1"
-            style={{ 
-              backgroundColor: `${ROLE_DISPLAY[currentRole.type].color}20`,
-              color: ROLE_DISPLAY[currentRole.type].color,
-              borderColor: ROLE_DISPLAY[currentRole.type].color,
-            }}
-          >
-            {ROLE_DISPLAY[currentRole.type].icon}
-            {ROLE_DISPLAY[currentRole.type].name}
-          </Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {currentRole && !isOut && (
+            <Badge 
+              className="gap-1"
+              style={{ 
+                backgroundColor: `${ROLE_DISPLAY[currentRole.type].color}20`,
+                color: ROLE_DISPLAY[currentRole.type].color,
+                borderColor: ROLE_DISPLAY[currentRole.type].color,
+              }}
+            >
+              {ROLE_DISPLAY[currentRole.type].icon}
+              {ROLE_DISPLAY[currentRole.type].name}
+            </Badge>
+          )}
+          {/* 回合记录 */}
+          <TimelineDialog events={room.gameHistory || []} />
+        </div>
       </div>
 
       {/* 玩家座位 */}
@@ -89,6 +94,13 @@ export function NightPhase({ gameState }: NightPhaseProps) {
       <div className="p-4 border-t border-border/50">
         {isOut ? (
           <WaitingPanel message="你已出局，等待其他玩家..." />
+        ) : actionResult ? (
+          <ActionPanel 
+            actionPrompt={actionPrompt} 
+            actionResult={actionResult}
+            currentPlayer={currentPlayer}
+            room={room}
+          />
         ) : hasSubmittedAction ? (
           <WaitingPanel message="已提交，等待其他玩家..." icon={<Check className="w-5 h-5 text-green-500" />} />
         ) : actionPrompt ? (
@@ -144,6 +156,7 @@ function ActionPanel({
           selectedTarget={selectedTarget}
           onSelect={setSelectedTarget}
           currentPlayerId={currentPlayer.id}
+          currentPlayer={currentPlayer}
         />
       );
 
@@ -209,14 +222,44 @@ function WolfKillPanel({
   selectedTarget,
   onSelect,
   currentPlayerId,
+  currentPlayer,
 }: {
   options: SerializedPlayer[];
   selectedTarget: string | null;
   onSelect: (id: string | null) => void;
   currentPlayerId: string;
+  currentPlayer: SerializedPlayer;
 }) {
+  // 检查是否为双狼人身份（两个身份都是狼人）
+  const isDoubleWolf = currentPlayer.identity1?.type === 'werewolf' && currentPlayer.identity2?.type === 'werewolf';
+  const [selectedTargets, setSelectedTargets] = useState<string[]>([]);
+  
   const handleSubmit = () => {
-    submitAction('wolf-kill', selectedTarget || undefined);
+    if (isDoubleWolf) {
+      // 双狼人可以选择多个目标
+      if (selectedTargets.length > 0) {
+        submitAction('wolf-kill', undefined, { targets: selectedTargets });
+      } else {
+        submitAction('wolf-kill');
+      }
+    } else {
+      submitAction('wolf-kill', selectedTarget || undefined);
+    }
+  };
+
+  const handleTargetSelect = (playerId: string) => {
+    if (isDoubleWolf) {
+      setSelectedTargets(prev => {
+        if (prev.includes(playerId)) {
+          return prev.filter(id => id !== playerId);
+        } else if (prev.length < 2) {
+          return [...prev, playerId];
+        }
+        return prev;
+      });
+    } else {
+      onSelect(selectedTarget === playerId ? null : playerId);
+    }
   };
 
   return (
@@ -224,23 +267,33 @@ function WolfKillPanel({
       <CardHeader className="pb-2">
         <CardTitle className="text-base flex items-center gap-2 text-wolf">
           <Target className="w-4 h-4" />
-          选择击杀目标
+          {isDoubleWolf ? '选择击杀目标（可多选）' : '选择击杀目标'}
         </CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
         <PlayerSeats
           players={options}
           currentPlayerId={currentPlayerId}
-          selectedId={selectedTarget}
-          onSelect={onSelect}
+          selectedId={isDoubleWolf ? null : selectedTarget}
+          selectedIds={isDoubleWolf ? selectedTargets : undefined}
+          onSelect={handleTargetSelect}
           selectableFilter={(p) => !isPlayerOut(p)}
         />
+        {isDoubleWolf && (
+          <p className="text-sm text-muted-foreground text-center">
+            已选择 {selectedTargets.length}/2 个目标
+          </p>
+        )}
         <div className="flex gap-2">
           <Button 
             variant="outline" 
             className="flex-1"
             onClick={() => {
-              onSelect(null);
+              if (isDoubleWolf) {
+                setSelectedTargets([]);
+              } else {
+                onSelect(null);
+              }
               submitAction('wolf-kill');
             }}
           >
@@ -249,7 +302,7 @@ function WolfKillPanel({
           <Button 
             className="flex-1 bg-wolf hover:bg-wolf/90"
             onClick={handleSubmit}
-            disabled={!selectedTarget}
+            disabled={isDoubleWolf ? selectedTargets.length === 0 : !selectedTarget}
           >
             确认击杀
           </Button>

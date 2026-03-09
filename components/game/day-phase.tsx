@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { TimelineDialog } from './timeline';
 import {
   Dialog,
   DialogContent,
@@ -111,19 +112,22 @@ export function DayPhase({ gameState }: DayPhaseProps) {
           </div>
 
           {/* 当前身份 */}
-          {currentRole && !isOut && (
-            <Badge 
-              className="gap-1"
-              style={{ 
-                backgroundColor: `${ROLE_DISPLAY[currentRole.type].color}20`,
-                color: ROLE_DISPLAY[currentRole.type].color,
-                borderColor: ROLE_DISPLAY[currentRole.type].color,
-              }}
-            >
-              {ROLE_DISPLAY[currentRole.type].icon}
-              {ROLE_DISPLAY[currentRole.type].name}
-            </Badge>
-          )}
+          <div className="flex items-center gap-2">
+            {currentRole && !isOut && (
+              <Badge 
+                className="gap-1"
+                style={{ 
+                  backgroundColor: `${ROLE_DISPLAY[currentRole.type].color}20`,
+                  color: ROLE_DISPLAY[currentRole.type].color,
+                  borderColor: ROLE_DISPLAY[currentRole.type].color,
+                }}
+              >
+                {ROLE_DISPLAY[currentRole.type].icon}
+                {ROLE_DISPLAY[currentRole.type].name}
+              </Badge>
+            )}
+            <TimelineDialog events={room.gameHistory || []} />
+          </div>
         </div>
 
         {/* 倒计时条 */}

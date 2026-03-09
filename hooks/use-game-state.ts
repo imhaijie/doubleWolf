@@ -7,7 +7,7 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import type { 
   SerializedRoom, SerializedPlayer, GamePhase, NightSubPhase,
-  GameRecap, Role, RolePool, GameSettings
+  GameRecap, Role, RolePool, GameSettings, GameEvent
 } from '@/lib/types';
 
 // 操作提示数据
@@ -39,6 +39,8 @@ export interface GameState {
   currentPhase: GamePhase;
   nightSubPhase: NightSubPhase | null;
   nightNumber: number;
+  // 历史事件，用于回放/查看
+  history: GameEvent[];
 
   // 操作状态
   actionPrompt: ActionPrompt | null;
@@ -51,6 +53,7 @@ export interface GameState {
   votedCount: number;
   totalVoters: number;
   hasVoted: boolean;
+  history: GameEvent[];
 
   // 死亡公告
   deathEvents: DeathEvent[];
@@ -87,6 +90,7 @@ const initialState: GameState = {
   votedCount: 0,
   totalVoters: 0,
   hasVoted: false,
+  history: [],
   deathEvents: [],
   gameOver: false,
   winner: null,
@@ -123,8 +127,7 @@ export function useGameState(roomId?: string) {
       votedCount: room.dayState?.votedCount || 0,
       totalVoters: room.dayState?.totalVoters || 0,
       gameOver: room.phase === 'game-over',
-      winner: room.winner,
-      isReconnecting: false,
+      winner: room.winner,      history: room.gameHistory || [],      isReconnecting: false,
       // 重置操作状态
       hasSubmittedAction: room.nightState?.completedActions.includes(playerId || '') || false,
     });
@@ -132,6 +135,19 @@ export function useGameState(roomId?: string) {
 
   // 初始化 Socket 监听
   const { toast } = useToast();
+
+  // 房主权限请求：在加入/创建房间时就申请通知和音频播放权限
+  useEffect(() => {
+    if (typeof window !== 'undefined' && state.room && state.currentPlayer?.isHost) {
+      if ('Notification' in window) {
+        Notification.requestPermission().catch(() => {});
+      }
+      // 尝试播放一次音频以激活播放权限（静音处理）
+      const testAudio = new Audio('/notification.mp3');
+      testAudio.volume = 0;
+      testAudio.play().catch(() => {});
+    }
+  }, [state.room?.id, state.currentPlayer?.isHost]);
 
   useEffect(() => {
     const socket = getSocket();
@@ -184,6 +200,9 @@ export function useGameState(roomId?: string) {
     cleanups.push(onSocketEvent('player-joined', (player) => {
       setState(prev => {
         if (!prev.room) return prev;
+        // 检查玩家是否已存在，避免重复添加
+        const playerExists = prev.room.players.some(p => p.id === player.id);
+        if (playerExists) return prev;
         const players = [...prev.room.players, player];
         return { ...prev, room: { ...prev.room, players } };
       });
@@ -224,13 +243,17 @@ export function useGameState(roomId?: string) {
 
     // 阶段更新
     cleanups.push(onSocketEvent('phase-update', ({ phase, subPhase, data }) => {
+      // 如果是同一主阶段内的子阶段更新（如夜晚内的不同子阶段），保留结果
+      const phaseDifferent = phase !== state.currentPhase;
+      
       updateState({
         currentPhase: phase,
         nightSubPhase: subPhase || null,
         nightNumber: (data as { nightNumber?: number })?.nightNumber || state.nightNumber,
         hasSubmittedAction: false,
         actionPrompt: null,
-        actionResult: null,
+        // 只在阶段改变时清除结果，同阶段内子阶段更新时保留
+        actionResult: phaseDifferent ? null : state.actionResult,
         hasVoted: false,
       });
     }));

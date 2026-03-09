@@ -8,6 +8,7 @@ interface PlayerSeatsProps {
   players: SerializedPlayer[];
   currentPlayerId: string;
   selectedId?: string | null;
+  selectedIds?: string[];
   onSelect?: (playerId: string) => void;
   selectableFilter?: (player: SerializedPlayer) => boolean;
   showRole?: boolean;
@@ -17,6 +18,7 @@ export function PlayerSeats({
   players,
   currentPlayerId,
   selectedId,
+  selectedIds,
   onSelect,
   selectableFilter,
   showRole = false,
@@ -26,7 +28,7 @@ export function PlayerSeats({
       {players.map((player) => {
         const isOut = isPlayerOut(player);
         const isCurrentPlayer = player.id === currentPlayerId;
-        const isSelected = selectedId === player.id;
+        const isSelected = selectedId === player.id || (selectedIds && selectedIds.includes(player.id));
         const isSelectable = selectableFilter ? selectableFilter(player) : !isOut;
         const canSelect = onSelect && isSelectable && !isCurrentPlayer;
 

@@ -22,14 +22,6 @@ npm run dev
 # 访问 http://localhost:3000
 ```
 
-### 生成提示音（可选）
-
-```bash
-# 需要安装 ffmpeg
-chmod +x scripts/generate-notification.sh
-./scripts/generate-notification.sh
-```
-
 ## 生产部署
 
 ### 方案一：Node.js 服务器直接运行

@@ -78,6 +78,7 @@ export interface SerializedRoom {
     votingPhase: boolean;
   };
   winner: 'wolf' | 'good' | null;
+  gameHistory?: GameEvent[]; // 事件时间轴，客户端用于回放/查看
 }
 
 export interface GameEvent {
