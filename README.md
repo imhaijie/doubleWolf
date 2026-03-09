@@ -207,6 +207,9 @@ werewolf-helper/
 
 ## 📝 开发说明
 
+> **开发规范**：所有改动在提交到仓库前必须先在本地运行 `npm run build`（或 `npm run dev`）确认没有编译/运行错误。推荐添加 pre-push 钩子自动执行构建。
+
+
 ### 添加新角色
 1. 在 `server/roles.ts` 中定义角色
 2. 在 `server/types.ts` 中添加类型
